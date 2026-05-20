@@ -1,6 +1,7 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 
+#include "../utils/crash_log.h"
 #include "../utils/util.h"
 #include "channel_delegate.h"
 
@@ -12,10 +13,39 @@ namespace flutter_inappwebview_plugin
       this->messenger, name,
       &flutter::StandardMethodCodec::GetInstance()
     );
+    // Catch-all crash guard: EVERY MethodChannel derived from ChannelDelegate
+    // routes through this lambda before reaching the (virtual) HandleMethodCall
+    // on the derived class. Wrapping here covers all 14+ HandleMethodCall
+    // implementations at once, including ones we don't know about.
+    //
+    // We log the channel name + method name BEFORE dispatch, so a subsequent
+    // native crash leaves a clear breadcrumb showing the exact channel/method
+    // active at the moment of death.
+    const std::string channelName = name;
     channel->SetMethodCallHandler(
-      [this](const auto& call, auto result)
+      [this, channelName](const auto& call, auto result)
       {
-        this->HandleMethodCall(call, std::move(result));
+        const std::string methodName = call.method_name();
+        crashLog("CHANNEL_CALL", channelName + " :: " + methodName);
+        try {
+          this->HandleMethodCall(call, std::move(result));
+          crashLog("CHANNEL_DONE", channelName + " :: " + methodName);
+        }
+        catch (const std::exception& e) {
+          // Note: `result` was moved into HandleMethodCall. If it was already
+          // consumed (Success/Error called), nothing more to do. If not — the
+          // Flutter side may hang waiting for a response, but the process
+          // stays alive and the user gets a recoverable failure rather than
+          // a hard crash. The log line captures the cause.
+          crashLog("CHANNEL_EXCEPTION",
+                   channelName + " :: " + methodName +
+                   " :: std::exception: " + e.what());
+        }
+        catch (...) {
+          crashLog("CHANNEL_EXCEPTION",
+                   channelName + " :: " + methodName +
+                   " :: non-standard native exception");
+        }
       });
   }
 
