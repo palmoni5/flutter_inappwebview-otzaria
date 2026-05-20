@@ -8,6 +8,7 @@
 #include "../plugin_scripts_js/javascript_bridge_js.h"
 #include "../types/url_request.h"
 #include "../types/user_script.h"
+#include "../utils/crash_log.h"
 #include "../utils/flutter.h"
 #include "../utils/log.h"
 #include "../utils/string.h"
@@ -65,6 +66,14 @@ namespace flutter_inappwebview_plugin
     auto* arguments = std::get_if<flutter::EncodableMap>(method_call.arguments());
     auto& methodName = method_call.method_name();
 
+    // crash-guard wrap — catches native C++ exceptions thrown during WebView
+    // creation (the path the dump pointed at) and converts them to Dart
+    // errors instead of process termination. The crash log lets us identify
+    // the exact method that was active at the moment of a native crash even
+    // when no exception was thrown to catch.
+    crashLogMethodEnter(std::string("InAppWebViewManager.") + methodName);
+    try {
+
     if (string_equals(methodName, "createInAppWebView")) {
       if (isSupported()) {
         createInAppWebView(arguments, std::move(result));
@@ -100,10 +109,22 @@ namespace flutter_inappwebview_plugin
     else {
       result->NotImplemented();
     }
+
+    crashLogMethodExit(std::string("InAppWebViewManager.") + methodName);
+    } catch (const std::exception& e) {
+      crashLogMethodException(std::string("InAppWebViewManager.") + methodName,
+                              std::string("std::exception: ") + e.what());
+      result->Error("native_exception", e.what());
+    } catch (...) {
+      crashLogMethodException(std::string("InAppWebViewManager.") + methodName,
+                              "non-standard native exception");
+      result->Error("native_exception", "non-standard native exception");
+    }
   }
 
   void InAppWebViewManager::createInAppWebView(const flutter::EncodableMap* arguments, std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result)
   {
+    crashLog("CHECKPOINT", "createInAppWebView: begin");
     auto result_ = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(std::move(result));
 
     if (!plugin) {
@@ -148,11 +169,18 @@ namespace flutter_inappwebview_plugin
 
     auto initialSettings = std::make_shared<InAppWebViewSettings>(settingsMap);
 
+    crashLog("CHECKPOINT", "createInAppWebView: before createInAppWebViewEnv");
     InAppWebView::createInAppWebViewEnv(hwnd, true, webViewEnvironment, initialSettings,
       [=](wil::com_ptr<ICoreWebView2Environment> webViewEnv,
         wil::com_ptr<ICoreWebView2Controller> webViewController,
         wil::com_ptr<ICoreWebView2CompositionController> webViewCompositionController)
       {
+        // This lambda is invoked from the WebView2 native side (a Chromium
+        // thread). C++ exceptions must NOT propagate back into Chromium —
+        // doing so terminates the process. Wrap the entire body in a
+        // try/catch that turns any failure into a Dart-visible error.
+        crashLog("CHECKPOINT", "createInAppWebView: callback entered");
+        try {
         if (plugin && webViewEnv && webViewController && webViewCompositionController) {
           std::optional<std::vector<std::shared_ptr<UserScript>>> initialUserScripts = initialUserScriptList.has_value() ?
             functional_map(initialUserScriptList.value(), [](const flutter::EncodableValue& map) { return std::make_shared<UserScript>(std::get<flutter::EncodableMap>(map)); }) :
@@ -185,6 +213,7 @@ namespace flutter_inappwebview_plugin
             windowWebViews.erase(windowId.value());
           }
 
+          crashLog("CHECKPOINT", "createInAppWebView: before CustomPlatformView ctor");
           auto customPlatformView = std::make_unique<CustomPlatformView>(plugin->registrar->messenger(),
             plugin->registrar->texture_registrar(),
             graphics_context(),
@@ -201,10 +230,20 @@ namespace flutter_inappwebview_plugin
             customPlatformView->view->initChannel(textureId, std::nullopt);
             webViews.insert({ textureId, std::move(customPlatformView) });
           }
+          crashLog("CHECKPOINT", "createInAppWebView: success");
           result_->Success(textureId);
         }
         else {
           result_->Error("0", "Cannot create the InAppWebView instance!");
+        }
+        } catch (const std::exception& e) {
+          crashLogMethodException("createInAppWebView.callback",
+                                  std::string("std::exception: ") + e.what());
+          result_->Error("native_exception", e.what());
+        } catch (...) {
+          crashLogMethodException("createInAppWebView.callback",
+                                  "non-standard native exception");
+          result_->Error("native_exception", "non-standard native exception");
         }
       }
     );
