@@ -320,7 +320,11 @@ class _CustomPlatformViewState extends State<CustomPlatformView>
     _controller.initialize(
       onPlatformViewCreated: (id) {
         widget.onPlatformViewCreated?.call(id);
-        setState(() {});
+        // Guard against the host widget being disposed during the async
+        // `initialize` call. Without this, calling setState on an unmounted
+        // state throws "Null check operator used on a null value" and on
+        // Windows can be followed by a native crash in the WebView2 renderer.
+        if (mounted) setState(() {});
       },
       arguments: widget.creationParams,
     );
@@ -339,11 +343,15 @@ class _CustomPlatformViewState extends State<CustomPlatformView>
 
     // Report initial surface size and widget position
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _reportSurfaceSize();
       _reportWidgetPosition();
     });
 
     _cursorSubscription = _controller._cursor.listen((cursor) {
+      // The subscription is cancelled in dispose(), but a queued event can
+      // still be delivered after the state is unmounted in some lifecycles.
+      if (!mounted) return;
       setState(() {
         _cursor = cursor;
       });
@@ -502,29 +510,39 @@ class _CustomPlatformViewState extends State<CustomPlatformView>
 
   void _reportSurfaceSize() async {
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
-    if (box != null) {
-      await _controller.ready;
-      unawaited(
-        _controller._setSize(
-          box.size,
-          widget.scaleFactor ?? window.devicePixelRatio,
-        ),
-      );
-    }
+    if (box == null) return;
+    await _controller.ready;
+    // The widget tree (and the RenderBox) can change while `_controller.ready`
+    // is awaited — including being disposed entirely. Reading `box.size`
+    // before the box is laid out, or after it has been removed from the tree,
+    // is safe-ish for `size` itself but `_setSize` would push a stale size to
+    // native code. Bail out early when the state is no longer in the tree.
+    if (!mounted || !box.attached) return;
+    unawaited(
+      _controller._setSize(
+        box.size,
+        widget.scaleFactor ?? window.devicePixelRatio,
+      ),
+    );
   }
 
   void _reportWidgetPosition() async {
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
-    if (box != null) {
-      await _controller.ready;
-      final position = box.localToGlobal(Offset.zero);
-      unawaited(
-        _controller._setPosition(
-          position,
-          widget.scaleFactor ?? window.devicePixelRatio,
-        ),
-      );
-    }
+    if (box == null) return;
+    await _controller.ready;
+    // After the await, the RenderBox can be detached (parent == null), in
+    // which case `localToGlobal` -> `getTransformTo` throws "Null check
+    // operator used on a null value". On Windows this Dart-side exception
+    // has been observed to coincide with a native crash in the WebView2
+    // renderer. Skip the position report if the box is no longer attached.
+    if (!mounted || !box.attached) return;
+    final position = box.localToGlobal(Offset.zero);
+    unawaited(
+      _controller._setPosition(
+        position,
+        widget.scaleFactor ?? window.devicePixelRatio,
+      ),
+    );
   }
 
   @override

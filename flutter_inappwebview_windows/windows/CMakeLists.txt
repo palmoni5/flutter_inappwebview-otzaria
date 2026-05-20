@@ -55,6 +55,8 @@ list(APPEND PLUGIN_SOURCES
   "utils/base64.h"
   "utils/uri.h"
   "utils/uuid.h"
+  "utils/crash_log.h"
+  "utils/crash_log.cpp"
   "types/channel_delegate.cpp"
   "types/channel_delegate.h"
   "types/base_callback_result.h"
