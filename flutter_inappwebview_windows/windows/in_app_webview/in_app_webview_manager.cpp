@@ -9,6 +9,7 @@
 #include "../types/url_request.h"
 #include "../types/user_script.h"
 #include "../utils/crash_log.h"
+#include "../utils/safe_log.h"
 #include "../utils/flutter.h"
 #include "../utils/log.h"
 #include "../utils/string.h"
@@ -63,8 +64,14 @@ namespace flutter_inappwebview_plugin
   void InAppWebViewManager::HandleMethodCall(const flutter::MethodCall<flutter::EncodableValue>& method_call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result)
   {
-    auto* arguments = std::get_if<flutter::EncodableMap>(method_call.arguments());
     auto& methodName = method_call.method_name();
+    // Win32-only safeLog FIRST, before anything that touches MSVCP140 — the
+    // existing crashLogMethodEnter below builds a std::string via concat and
+    // would itself crash on the affected installations, leaving no trace.
+    // We pass only methodName.c_str() (inline, no MSVCP140 dispatch) and a
+    // const char* literal, so this line cannot trip the +0x12f58 fault.
+    safeLog("HMCALL_IAWMGR", methodName.c_str());
+    auto* arguments = std::get_if<flutter::EncodableMap>(method_call.arguments());
 
     // crash-guard wrap — catches native C++ exceptions thrown during WebView
     // creation (the path the dump pointed at) and converts them to Dart
