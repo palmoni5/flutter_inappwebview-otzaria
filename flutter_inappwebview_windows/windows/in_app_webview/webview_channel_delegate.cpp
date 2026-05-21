@@ -4,6 +4,7 @@
 #include "../types/content_world.h"
 #include "../utils/flutter.h"
 #include "../utils/crash_log.h"
+#include "../utils/safe_log.h"
 #include "../utils/log.h"
 #include "../utils/strconv.h"
 #include "../utils/string.h"
@@ -160,12 +161,11 @@ namespace flutter_inappwebview_plugin
     auto& arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
     auto& methodName = method_call.method_name();
 
-    // Record the method we are about to dispatch. If the process dies natively
-    // somewhere inside the call (downstream WebView2/MSVCP140 crash), the log
-    // file will still show this line as the last activity — invaluable for
-    // post-mortem diagnosis. The try/catch below additionally turns Dart-side
-    // visible C++ exceptions into recoverable errors instead of terminations.
-    crashLogMethodEnter(methodName);
+    // Record the method we are about to dispatch via the Win32-only safeLog
+    // (passes methodName.c_str() — never dispatches into MSVCP140). The
+    // try/catch below additionally turns Dart-side visible C++ exceptions
+    // into recoverable errors instead of process terminations.
+    safeLog("HMCALL_WEBVIEW", methodName.c_str());
     try {
 
     if (string_equals(methodName, "getUrl")) {
@@ -562,19 +562,19 @@ namespace flutter_inappwebview_plugin
       result->NotImplemented();
     }
 
-    crashLogMethodExit(methodName);
+    safeLog("HMCALL_WEBVIEW_DONE", methodName.c_str());
     } catch (const std::exception& e) {
       // C++ standard exception — turn into a Dart-visible error instead of
       // letting the process die. The Dart side will receive a method-channel
       // error and can render it as a non-fatal failure.
-      crashLogMethodException(methodName, std::string("std::exception: ") + e.what());
+      safeLog("HMCALL_WEBVIEW_EXCEPTION", methodName.c_str());
       result->Error("native_exception", e.what());
     } catch (...) {
       // Any other native exception (including ?AVFileFormatException@@ that
       // we have observed in Chromium internals). The exact type is opaque to
       // us here, but at least we can prevent the process from being torn down
       // mid-stack-unwind through MSVCP140 string destructors.
-      crashLogMethodException(methodName, "non-standard native exception");
+      safeLog("HMCALL_WEBVIEW_EXCEPTION", methodName.c_str());
       result->Error("native_exception", "non-standard native exception");
     }
   }

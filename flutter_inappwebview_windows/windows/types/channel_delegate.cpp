@@ -26,34 +26,32 @@ namespace flutter_inappwebview_plugin
     // installations where crashLog itself faults. The follow-up crashLog
     // call below adds the channel name for clearer correlation, but is
     // best-effort.
-    const std::string channelName = name;
+    // NOTE: the lambda body deliberately avoids std::string concatenation.
+    // crashLog (which used `channelName + " :: " + methodName`) was the
+    // observed trigger of the MSVCP140 14.36.32532.0 +0x12f58 null-read
+    // crash on at least one user's installation: every method call hit
+    // the same buggy MSVCP140 std::string code before HandleMethodCall
+    // could run. safeLog only takes const char*; methodName.c_str() is
+    // inline and does not dispatch into MSVCP140. The channel name is
+    // logged once at construction below and isn't needed per-call.
+    safeLog("CHANNEL_CTOR", name.c_str());
     channel->SetMethodCallHandler(
-      [this, channelName](const auto& call, auto result)
+      [this](const auto& call, auto result)
       {
-        const std::string methodName = call.method_name();
+        const std::string& methodName = call.method_name();
         safeLog("CHANNEL_CALL", methodName.c_str());
-        crashLog("CHANNEL_CALL", channelName + " :: " + methodName);
         try {
           this->HandleMethodCall(call, std::move(result));
           safeLog("CHANNEL_DONE", methodName.c_str());
-          crashLog("CHANNEL_DONE", channelName + " :: " + methodName);
         }
         catch (const std::exception& e) {
-          // Note: `result` was moved into HandleMethodCall. If it was already
-          // consumed (Success/Error called), nothing more to do. If not — the
-          // Flutter side may hang waiting for a response, but the process
-          // stays alive and the user gets a recoverable failure rather than
-          // a hard crash. The log line captures the cause.
+          // `result` was moved into HandleMethodCall. If already consumed
+          // (Success/Error called), nothing more to do. If not, Flutter may
+          // hang waiting for a response, but the process stays alive.
           safeLog("CHANNEL_EXCEPTION", methodName.c_str());
-          crashLog("CHANNEL_EXCEPTION",
-                   channelName + " :: " + methodName +
-                   " :: std::exception: " + e.what());
         }
         catch (...) {
           safeLog("CHANNEL_EXCEPTION", methodName.c_str());
-          crashLog("CHANNEL_EXCEPTION",
-                   channelName + " :: " + methodName +
-                   " :: non-standard native exception");
         }
       });
   }
