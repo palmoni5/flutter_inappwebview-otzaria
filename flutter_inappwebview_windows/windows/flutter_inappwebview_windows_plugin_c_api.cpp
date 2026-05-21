@@ -5,14 +5,27 @@
 #include "flutter_inappwebview_windows_plugin.h"
 #include "utils/crash_log.h"
 
-// NOTE: an earlier revision installed a global static `DllLoadMarker` that
-// called crashLog() from DLL_PROCESS_ATTACH. Combined with C++ exceptions
-// now being enabled (we removed _HAS_EXCEPTIONS=0), a std::string allocation
-// inside that static initializer could throw under loader lock, propagate
-// out, and abort DLL initialization — manifesting as STATUS_DLL_INIT_FAILED
-// (0xc0000142). The C_API_REGISTER line below runs in the same role —
-// confirming the DLL is loaded and Flutter has invoked it — but executes
-// AFTER the loader is done, so it's safe.
+namespace
+{
+  // Global constructor that fires when the DLL is loaded into the process,
+  // before any other plugin code runs. This is our earliest possible
+  // logging point — if this line is missing from the native log after a
+  // crash, it means either (a) the build deployed by the host application
+  // does not contain this DLL, or (b) a static initializer earlier in the
+  // C runtime has already terminated the process. Either way it is a
+  // diagnostic ground truth that the crashLog mechanism itself is wired
+  // up and reachable in this binary.
+  struct DllLoadMarker {
+    DllLoadMarker() noexcept
+    {
+      flutter_inappwebview_plugin::crashLog(
+        "DLL_LOADED",
+        "flutter_inappwebview_windows_plugin.dll attached to process");
+    }
+  };
+  static DllLoadMarker g_dllLoadMarker;
+}
+
 void FlutterInappwebviewWindowsPluginCApiRegisterWithRegistrar(
   FlutterDesktopPluginRegistrarRef registrar)
 {
