@@ -296,15 +296,16 @@ function(FLUTTER_INAPPWEBVIEW_WINDOWS_APPLY_STANDARD_SETTINGS TARGET)
   target_compile_options(${TARGET} PRIVATE /W4 /wd"4100")
   target_compile_options(${TARGET} PRIVATE /EHsc)
   target_compile_options(${TARGET} PRIVATE /bigobj)
-  # NOTE: _HAS_EXCEPTIONS=0 disables C++ exception semantics in the MSVC STL —
-  # std::string / std::vector internal throws become abort()/terminate() and
-  # try/catch blocks at the plugin boundary become inert against any failure
-  # raised from within MSVCP140.dll or WebView2 cross-DLL boundaries. This is
-  # the root cause of the silent terminations observed when Otzaria opens
-  # certain plugin WebViews on Windows: a std::length_error in MSVCP140 cannot
-  # propagate, the process aborts before any handler runs, and no log line is
-  # ever written. We enable exceptions so the crash guards in ChannelDelegate
-  # and WebViewChannelDelegate can actually catch and report failures.
+  # Keep _HAS_EXCEPTIONS=0 on. An earlier attempt to remove it (so that the
+  # try/catch crash guards in HandleMethodCall could actually catch STL
+  # throws) caused the host application to fail to start silently — the
+  # MSVCP140 STL ABI for _HAS_EXCEPTIONS=0 vs =1 differs, and removing it
+  # produced ABI mismatches across the plugin / host boundary. Native crash
+  # tracing is now performed exclusively by SetUnhandledExceptionFilter in
+  # the plugin entry point: abort() / RaiseException both surface through
+  # the SEH filter even with _HAS_EXCEPTIONS=0, so the diagnostic path is
+  # preserved without destabilizing the DLL.
+  target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
 endfunction()
 flutter_inappwebview_windows_apply_standard_settings(${PLUGIN_NAME})

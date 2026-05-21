@@ -75,18 +75,13 @@ namespace flutter_inappwebview_plugin
   {
     crashLog("PLUGIN_INIT", "RegisterWithRegistrar: begin");
     installUnhandledFilterOnce();
-    try {
-      auto plugin = std::make_unique<FlutterInappwebviewWindowsPlugin>(registrar);
-      registrar->AddPlugin(std::move(plugin));
-      crashLog("PLUGIN_INIT", "RegisterWithRegistrar: done");
-    } catch (const std::exception& e) {
-      crashLog("PLUGIN_INIT_EXCEPTION",
-               std::string("std::exception: ") + e.what());
-      throw;
-    } catch (...) {
-      crashLog("PLUGIN_INIT_EXCEPTION", "non-standard exception");
-      throw;
-    }
+    // No try/catch here: with _HAS_EXCEPTIONS=0 the STL doesn't throw, and
+    // rethrowing across the extern "C" plugin boundary into Flutter caused
+    // silent process exits at startup. Native crashes from this point on
+    // are captured by the SetUnhandledExceptionFilter installed above.
+    auto plugin = std::make_unique<FlutterInappwebviewWindowsPlugin>(registrar);
+    registrar->AddPlugin(std::move(plugin));
+    crashLog("PLUGIN_INIT", "RegisterWithRegistrar: done");
   }
 
   FlutterInappwebviewWindowsPlugin::FlutterInappwebviewWindowsPlugin(flutter::PluginRegistrarWindows* registrar)
